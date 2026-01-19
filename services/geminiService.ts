@@ -4,7 +4,7 @@ import { Restaurant } from "../types";
 const getApiKey = () => process.env.API_KEY;
 
 // Cheapest Perplexity model with web access
-const MODEL_NAME = "llama-3.1-sonar-small-128k-online";
+const MODEL_NAME = "sonar";
 const PERPLEXITY_API_URL = "https://api.perplexity.ai/chat/completions";
 
 interface Coordinates {
