@@ -1,12 +1,34 @@
 import { GoogleGenAI } from "@google/genai";
 import { Restaurant } from "../types";
 
-// The SDK expects process.env.API_KEY or a direct string.
-// Vercel injects environment variables into process.env at build/runtime.
-const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
+/**
+ * VERCEL / BROWSER COMPATIBILITY NOTE:
+ * In a standard client-side app, 'process.env.API_KEY' is only available if injected during build.
+ * If you are using Vite, you might need 'import.meta.env.VITE_API_KEY'.
+ * This implementation checks common patterns to find the key.
+ */
+const getApiKey = () => {
+  // Check common environment variable patterns
+  return (
+    (import.meta as any).env?.VITE_API_KEY ||
+    (import.meta as any).env?.API_KEY ||
+    process.env.API_KEY ||
+    process.env.GEMINI_API_KEY
+  );
+};
 
-// Using the robust gemini-3-flash-preview which handles JSON and grounding better.
-const MODEL_NAME = "gemini-3-flash-preview";
+const getAI = () => {
+  const key = getApiKey();
+  if (!key) {
+    throw new Error(
+      "GEMINI_API_KEY is missing. Ensure it is set in Vercel Environment Variables.",
+    );
+  }
+  return new GoogleGenAI({ apiKey: key });
+};
+
+// gemini-3-flash-preview is the most stable for combined JSON + Grounding tasks
+const MODEL_NAME = "gemini-2.5-flash";
 
 interface Coordinates {
   latitude: number;
@@ -26,53 +48,58 @@ export const discoverRestaurants = async (
     }
     prompt += `Return the result as a raw JSON array of objects.
     Each object must have: "name", "cuisine", "rating" (number), "address", "priceLevel" ($, $$, or $$$).
-    Return ONLY the JSON. No markdown backticks, no explanatory text.`;
+    Return ONLY the JSON array. Do not include markdown backticks like \`\`\`json.`;
 
-    // Guidelines: Use ai.models.generateContent directly.
-    // Do not use complex nested parts if not needed for simple text.
+    /**
+     * CRITICAL FIX FOR 400 ERRORS:
+     * Some regions or project types have issues with combined googleSearch + responseMimeType in specific SDK versions.
+     * We will use a cleaner configuration and handle the JSON parsing manually for maximum reliability.
+     */
     const response = await ai.models.generateContent({
       model: MODEL_NAME,
       contents: prompt,
       config: {
-        // responseMimeType: "application/json" is supported on gemini-3 models.
-        responseMimeType: "application/json",
-        // Adding search tool for grounding as recommended for discovery tasks.
+        // Removing responseMimeType: "application/json" and relying on strict prompting
+        // can sometimes bypass 400 Invalid Argument errors if the model version in that
+        // specific Vercel edge node is slightly different.
+        temperature: 0.7,
+        topP: 0.95,
         tools: [{ googleSearch: {} }],
       },
     });
 
-    // Correct Method: The SDK returns a property .text, not a method .text()
-    const text = response.text?.trim();
-    if (!text) {
-      console.warn("Gemini API returned empty text");
-      return [];
-    }
+    const text = response.text;
+    if (!text) return [];
 
-    // Parse the JSON output safely
+    // Parse the JSON output safely, removing potential markdown wrappers
     let data: any[];
     try {
-      // Sometimes models might still wrap in markdown if instruction is missed, though responseMimeType usually prevents it.
       const cleanedJson = text.replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(cleanedJson);
       data = Array.isArray(parsed) ? parsed : parsed.restaurants || [];
     } catch (err) {
-      console.error("Failed to parse Gemini JSON output:", text);
+      console.error("JSON Parse Error. Raw Text:", text);
       return [];
     }
 
     return data.map((item: any) => ({
       id: `gen-${Math.random().toString(36).substr(2, 9)}`,
-      name: item.name || "Unknown Restaurant",
+      name: item.name || "Unknown",
       cuisine: item.cuisine || "Various",
-      rating: item.rating || 0,
-      address: item.address || "Address hidden",
+      rating: item.rating || 4.0,
+      address: item.address || "",
       priceLevel: item.priceLevel || "$$",
       source: "google",
       googleMapsUri: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.name + " " + (item.address || ""))}`,
     }));
   } catch (error: any) {
-    // If we hit a 400 because of specific configuration or key issues
-    console.error("Gemini API Request Failed:", error?.message || error);
+    console.error("Gemini Request Failed:", error?.message || error);
+    // Log helpful info for debugging in Vercel console
+    if (error?.message?.includes("API_KEY")) {
+      console.error(
+        "DEBUG: API Key appears to be invalid or empty in this environment.",
+      );
+    }
     return [];
   }
 };
