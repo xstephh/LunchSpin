@@ -31,7 +31,8 @@ export const discoverRestaurants = async (
       prompt += ` If no coordinates are provided, infer the area from the query text and use web search results for that area.`;
     }
     prompt += ` Each restaurant MUST exist in reality and include a working Google Maps URL (or official map URL) that opens the place.`;
-    prompt += ` Respond ONLY with JSON (no markdown, no prose, no code fences). Schema: [{"name": string, "cuisine": string, "rating": 1-5 number, "address": string, "priceLevel": "$" | "$$" | "$$$" | "$$$$", "mapsUrl": string, "source": "web"}].`;
+    prompt += ` Include exact coordinates for each place: "lat" and "lng" as numbers (from the map result).`;
+    prompt += ` Respond ONLY with JSON (no markdown, no prose, no code fences). Schema: [{"name": string, "cuisine": string, "rating": 1-5 number, "address": string, "priceLevel": "$" | "$$" | "$$$" | "$$$$", "mapsUrl": string, "lat": number, "lng": number, "source": "web"}].`;
 
     const body = {
       model: MODEL_NAME,
@@ -44,8 +45,8 @@ export const discoverRestaurants = async (
         { role: "user", content: prompt },
       ],
       return_citations: true,
-      max_tokens: 400,
-      temperature: 0.2,
+      max_tokens: 700,
+      temperature: 0.1,
     };
 
     const response = await fetch(PERPLEXITY_API_URL, {
@@ -73,10 +74,7 @@ export const discoverRestaurants = async (
       return [];
     }
 
-    // Strip code fences or leading prose to keep JSON parseable
-    const fenceRegex = /```[a-zA-Z]*\s*([\s\S]*?)```/;
-    const fencedMatch = rawText.match(fenceRegex);
-    const text = (fencedMatch ? fencedMatch[1] : rawText).trim();
+    const text = extractJsonArray(rawText);
     if (!text) {
       console.warn("Perplexity API returned empty content");
       return [];
@@ -86,25 +84,28 @@ export const discoverRestaurants = async (
     try {
       parsed = JSON.parse(text);
     } catch (err) {
-      // Fallback: try to extract JSON array substring if code fences or prose slipped through
-      const start = text.indexOf("[");
-      const end = text.lastIndexOf("]");
-      if (start !== -1 && end !== -1 && end > start) {
-        try {
-          parsed = JSON.parse(text.substring(start, end + 1));
-        } catch (err2) {
-          console.error("Failed to parse Perplexity JSON", err2, text);
-          return [];
-        }
-      } else {
-        console.error("Failed to parse Perplexity JSON", err, text);
-        return [];
-      }
+      console.error("Failed to parse Perplexity JSON", err, text);
+      return [];
     }
 
     const list = Array.isArray(parsed) ? parsed : parsed.restaurants || [];
+    const hasLocation = Boolean(location);
+    const filtered = hasLocation
+      ? list.filter((item: any) => {
+          const lat = Number(item.lat);
+          const lng = Number(item.lng);
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+          const distance = haversineKm(
+            location!.latitude,
+            location!.longitude,
+            lat,
+            lng,
+          );
+          return distance <= searchRadiusKm;
+        })
+      : list;
 
-    return list.map((item: any, idx: number) => ({
+    return filtered.map((item: any, idx: number) => ({
       id: `px-${Date.now().toString(36)}-${idx.toString(36)}`,
       name: item.name,
       cuisine: item.cuisine || "Unknown",
@@ -123,4 +124,87 @@ export const discoverRestaurants = async (
     console.error("Perplexity API Error:", error);
     return [];
   }
+};
+
+const extractJsonArray = (rawText: string): string | null => {
+  // Strip code fences or leading prose to keep JSON parseable
+  const fenceRegex = /```[a-zA-Z]*\s*([\s\S]*?)```/;
+  const fencedMatch = rawText.match(fenceRegex);
+  const candidate = (fencedMatch ? fencedMatch[1] : rawText).trim();
+  if (!candidate) return null;
+
+  const start = candidate.indexOf("[");
+  if (start === -1) return null;
+
+  // Try to find a full JSON array using balanced brackets.
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < candidate.length; i += 1) {
+    const ch = candidate[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+      } else if (ch === "\\") {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "[") depth += 1;
+    else if (ch === "]") {
+      depth -= 1;
+      if (depth === 0) return candidate.slice(start, i + 1);
+    }
+  }
+
+  // If truncated, salvage up to the last complete object and close the array.
+  let braceDepth = 0;
+  inString = false;
+  escape = false;
+  let lastObjectEnd = -1;
+  for (let i = start; i < candidate.length; i += 1) {
+    const ch = candidate[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+      } else if (ch === "\\") {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") braceDepth += 1;
+    else if (ch === "}") {
+      if (braceDepth > 0) braceDepth -= 1;
+      if (braceDepth === 0) lastObjectEnd = i;
+    }
+  }
+  if (lastObjectEnd !== -1) {
+    return `${candidate.slice(start, lastObjectEnd + 1)}]`;
+  }
+  return null;
+};
+
+const haversineKm = (
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number,
+): number => {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return 6371 * c;
 };
