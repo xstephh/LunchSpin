@@ -1,0 +1,7 @@
+{
+  "name": "LunchSpin",
+  "description": "A fun, aesthetic food decision helper with AI-powered discovery and personal list management.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
