@@ -2,10 +2,10 @@ import { GoogleGenAI } from "@google/genai";
 import { Restaurant } from "../types";
 
 // Always initialize inside the function or exported constant to ensure it picks up env vars correctly in various environments
-const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
+const getAI = () => new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // Using the recommended gemini-3-flash-preview
-const MODEL_NAME = "gemini-3-flash-preview";
+const MODEL_NAME = "gemini-2.5-flash";
 
 interface Coordinates {
   latitude: number;
