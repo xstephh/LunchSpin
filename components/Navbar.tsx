@@ -12,7 +12,6 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, setView }) => {
 
   const navItems = [
     { view: AppView.PICKER, icon: "fa-utensils", label: t("pick") },
-    { view: AppView.DISCOVERY, icon: "fa-compass", label: t("discover") },
     { view: AppView.LISTS, icon: "fa-list-ul", label: t("lists") },
     { view: AppView.STATS, icon: "fa-chart-pie", label: t("stats") },
     { view: AppView.SETTINGS, icon: "fa-gear", label: t("settings") },
