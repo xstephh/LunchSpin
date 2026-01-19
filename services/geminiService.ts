@@ -41,8 +41,12 @@ export const discoverRestaurants = async (
       },
     });
 
-    const text = response.text;
-    if (!text) return [];
+    // SDK returns a response object with a text() helper; older versions exposed .text directly.
+    const text = response.response?.text?.() ?? (response as any).text;
+    if (!text) {
+      console.warn("Gemini API returned empty body");
+      return [];
+    }
 
     // Parse the JSON output
     const rawData = JSON.parse(text);
