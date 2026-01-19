@@ -23,11 +23,15 @@ export const discoverRestaurants = async (
   }
 
   try {
-    let prompt = `Find 5 popular restaurants matching "${query}". `;
+    const searchRadiusKm = 10;
+    let prompt = `Run a web/local search for real restaurants (no fabrications). Find 5 restaurants for "${query}".`;
     if (location) {
-      prompt += `Search near coordinates: ${location.latitude}, ${location.longitude}. Use the location even if the text query is vague. `;
+      prompt += ` Only include results within ${searchRadiusKm} km of ${location.latitude}, ${location.longitude}. Use the coordinates even if the text query is vague.`;
+    } else {
+      prompt += ` If no coordinates are provided, infer the area from the query text and use web search results for that area.`;
     }
-    prompt += `Return ONLY a JSON array (no markdown, no prose, no code fences). Each item: {"name": string, "cuisine": string, "rating": 1-5 number, "address": string, "priceLevel": "$" | "$$" | "$$$" | "$$$$"}.`;
+    prompt += ` Each restaurant MUST exist in reality and include a working Google Maps URL (or official map URL) that opens the place.`;
+    prompt += ` Respond ONLY with JSON (no markdown, no prose, no code fences). Schema: [{"name": string, "cuisine": string, "rating": 1-5 number, "address": string, "priceLevel": "$" | "$$" | "$$$" | "$$$$", "mapsUrl": string, "source": "web"}].`;
 
     const body = {
       model: MODEL_NAME,
@@ -35,10 +39,11 @@ export const discoverRestaurants = async (
         {
           role: "system",
           content:
-            "You are a concise restaurant finder. Always respond with valid JSON only (no markdown, no commentary, no code fences).",
+            "You are a grounded restaurant finder. Always use live web search results; do not invent places. Return valid JSON only (no markdown, no commentary, no code fences).",
         },
         { role: "user", content: prompt },
       ],
+      return_citations: true,
       max_tokens: 400,
       temperature: 0.2,
     };
@@ -108,6 +113,7 @@ export const discoverRestaurants = async (
       priceLevel: item.priceLevel || "$$",
       source: "perplexity",
       googleMapsUri:
+        item.mapsUrl ||
         item.googleMapsUri ||
         `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
           (item.name || "") + " " + (item.address || ""),
