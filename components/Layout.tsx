@@ -24,6 +24,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       </div>
 
       {/* Main Container with Safe Area Handling */}
+      {/* Added safe-pt (defined in index.html) and flex-col to keep nav fixed */}
       <div className="flex-1 flex flex-col w-full max-w-md mx-auto bg-white/90 backdrop-blur-sm shadow-2xl relative z-10 border-x border-orange-100 overflow-hidden safe-pt">
         {children}
       </div>

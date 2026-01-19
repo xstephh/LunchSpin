@@ -19,23 +19,29 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, setView }) => {
   ];
 
   return (
-    <div className="sticky bottom-0 w-full bg-white border-t border-orange-100 flex justify-around items-center z-50 shadow-[0_-5px_10px_rgba(0,0,0,0.05)] safe-pb">
+    /* 
+       Fixed at bottom of the flex container. 
+       safe-pb applies padding for the iOS Home Screen indicator.
+    */
+    <nav className="shrink-0 w-full bg-white border-t border-orange-100 shadow-[0_-5px_15px_rgba(0,0,0,0.05)] z-50 safe-pb">
       <div className="flex justify-around items-center w-full h-16">
         {navItems.map((item) => (
           <button
             key={item.view}
             onClick={() => setView(item.view)}
-            className={`flex flex-col items-center justify-center w-full h-full transition-colors duration-200 ${
-              currentView === item.view
-                ? "text-orange-600"
-                : "text-gray-400 hover:text-orange-400"
+            className={`flex flex-col items-center justify-center w-full h-full transition-all duration-200 active:scale-90 ${
+              currentView === item.view ? "text-orange-600" : "text-gray-400"
             }`}
           >
-            <i className={`fa-solid ${item.icon} text-xl mb-1`}></i>
-            <span className="text-[10px] font-medium">{item.label}</span>
+            <i
+              className={`fa-solid ${item.icon} text-xl mb-1 ${currentView === item.view ? "animate-pulse" : ""}`}
+            ></i>
+            <span className="text-[10px] font-bold uppercase tracking-tighter">
+              {item.label}
+            </span>
           </button>
         ))}
       </div>
-    </div>
+    </nav>
   );
 };

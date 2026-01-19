@@ -1,11 +1,12 @@
 import { GoogleGenAI } from "@google/genai";
 import { Restaurant } from "../types";
 
-// Always initialize inside the function or exported constant to ensure it picks up env vars correctly in various environments
+// The SDK expects process.env.API_KEY or a direct string.
+// Vercel injects environment variables into process.env at build/runtime.
 const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-// Using the recommended gemini-3-flash-preview
-const MODEL_NAME = "gemini-2.5-flash";
+// Using the robust gemini-3-flash-preview which handles JSON and grounding better.
+const MODEL_NAME = "gemini-3-flash-preview";
 
 interface Coordinates {
   latitude: number;
@@ -19,56 +20,59 @@ export const discoverRestaurants = async (
   try {
     const ai = getAI();
 
-    // Keep payload simple to avoid 400s: structured prompt + JSON response.
     let prompt = `Find 5 popular restaurants matching "${query}". `;
     if (location) {
-      prompt += `Search near coordinates: ${location.latitude}, ${location.longitude}. `;
+      prompt += `Search specifically near coordinates: ${location.latitude}, ${location.longitude}. `;
     }
-    prompt += `Return ONLY a JSON array (no markdown, no prose). Fields: "name", "cuisine", "rating" (1-5 number), "address", "priceLevel" ($, $$, or $$$).`;
+    prompt += `Return the result as a raw JSON array of objects.
+    Each object must have: "name", "cuisine", "rating" (number), "address", "priceLevel" ($, $$, or $$$).
+    Return ONLY the JSON. No markdown backticks, no explanatory text.`;
 
+    // Guidelines: Use ai.models.generateContent directly.
+    // Do not use complex nested parts if not needed for simple text.
     const response = await ai.models.generateContent({
       model: MODEL_NAME,
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: prompt }],
-        },
-      ],
+      contents: prompt,
       config: {
+        // responseMimeType: "application/json" is supported on gemini-3 models.
         responseMimeType: "application/json",
+        // Adding search tool for grounding as recommended for discovery tasks.
+        tools: [{ googleSearch: {} }],
       },
     });
 
-    // SDK returns a response object with a text() helper; older versions exposed .text directly.
-    const text = response.response?.text?.() ?? (response as any).text;
+    // Correct Method: The SDK returns a property .text, not a method .text()
+    const text = response.text?.trim();
     if (!text) {
-      console.warn("Gemini API returned empty body");
+      console.warn("Gemini API returned empty text");
       return [];
     }
 
-    // Parse the JSON output
-    let rawData: any;
+    // Parse the JSON output safely
+    let data: any[];
     try {
-      rawData = JSON.parse(text);
+      // Sometimes models might still wrap in markdown if instruction is missed, though responseMimeType usually prevents it.
+      const cleanedJson = text.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(cleanedJson);
+      data = Array.isArray(parsed) ? parsed : parsed.restaurants || [];
     } catch (err) {
-      console.error("Failed to parse Gemini JSON", err, text);
+      console.error("Failed to parse Gemini JSON output:", text);
       return [];
     }
-    const data = Array.isArray(rawData) ? rawData : rawData.restaurants || [];
 
     return data.map((item: any) => ({
       id: `gen-${Math.random().toString(36).substr(2, 9)}`,
-      name: item.name,
-      cuisine: item.cuisine || "Unknown",
+      name: item.name || "Unknown Restaurant",
+      cuisine: item.cuisine || "Various",
       rating: item.rating || 0,
-      address: item.address,
+      address: item.address || "Address hidden",
       priceLevel: item.priceLevel || "$$",
       source: "google",
       googleMapsUri: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.name + " " + (item.address || ""))}`,
     }));
-  } catch (error) {
-    console.error("Gemini API Error details:", error);
-    // Return empty array so UI doesn't crash
+  } catch (error: any) {
+    // If we hit a 400 because of specific configuration or key issues
+    console.error("Gemini API Request Failed:", error?.message || error);
     return [];
   }
 };
